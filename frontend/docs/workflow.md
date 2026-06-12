@@ -154,6 +154,36 @@ intersectObjects(starPoints)
 
 ---
 
+## 다음 단계: AR 단계 빌드 전환
+
+> MVP(3D 성도 뷰어) 완성 후 AR 카메라 오버레이 단계에 진입할 때 아래 전환 작업을 수행한다.
+
+### Expo Go → Development Build 전환 이유
+
+| 항목          | Expo Go (현재)   | Development Build (AR 단계) |
+| ------------- | ---------------- | --------------------------- |
+| 실행 방식     | QR 스캔          | .apk / .ipa 직접 설치       |
+| 네이티브 모듈 | Expo 내장 모듈만 | 모든 네이티브 모듈 가능     |
+| AR 카메라     | ❌ 불가          | ✅ 가능                     |
+| 빌드 필요     | 없음             | Android / iOS 각각 필요     |
+
+### 전환 시 추가 작업
+
+```
+1. expo-dev-client 설치
+   npx expo install expo-dev-client
+
+2. Development Build 생성
+   Android: npx expo run:android
+   iOS:     npx expo run:ios  (macOS 필요)
+
+3. AR 관련 패키지 추가
+   - react-native-vision-camera  (카메라)
+   - expo-sensors                (자이로스코프, 이미 설치됨)
+```
+
+---
+
 ## 데이터 출처 정리
 
 | 데이터              | 출처                       | 시점              |
