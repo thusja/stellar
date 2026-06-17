@@ -61,15 +61,15 @@ export default function App() {
             style={[styles.tab, styles.tabActive]}
             onPress={() => setScreen('starmap')}
           >
-            <Text style={styles.tabIconActive}>?</Text>
-            <Text style={styles.tabLabelActive}>����</Text>
+            <Text style={styles.tabIconActive}>🗺️</Text>
+            <Text style={styles.tabLabelActive}>성도</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.tab}
             onPress={() => setScreen('nightguide')}
           >
-            <Text style={styles.tabIcon}>??</Text>
-            <Text style={styles.tabLabel}>���� ��</Text>
+            <Text style={styles.tabIcon}>🌙</Text>
+            <Text style={styles.tabLabel}>오늘 밤</Text>
           </TouchableOpacity>
         </SafeAreaView>
       </View>

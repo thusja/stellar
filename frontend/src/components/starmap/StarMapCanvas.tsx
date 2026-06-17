@@ -5,7 +5,7 @@ import * as THREE from 'three';
 
 import { BRIGHT_STARS } from '../../data/brightStars';
 import { CONSTELLATION_LINES } from '../../data/constellationLines';
-import { raDec3D, tempToColor } from '../../utils/starUtils';
+import { raDec3D, tempToColor, magnitudeToSize } from '../../utils/starUtils';
 import { useUIStore } from '../../stores/uiStore';
 import { useStarStore } from '../../stores/starStore';
 import { useObserverStore } from '../../stores/observerStore';
@@ -57,7 +57,13 @@ export default function StarMapCanvas() {
   const { width: screenW, height: screenH } = useWindowDimensions();
 
   const selectStar = useUIStore((s) => s.selectStar);
+  const focusStarId = useUIStore((s) => s.focusStarId);
+  const setFocusStarId = useUIStore((s) => s.setFocusStarId);
+  const isNorthLocked = useUIStore((s) => s.isNorthLocked);
+  const highlightedConstellation = useUIStore((s) => s.highlightedConstellation);
   const setStars = useStarStore((s) => s.setStars);
+  const magnitudeFilter = useStarStore((s) => s.magnitudeFilter);
+  const showConstellationLines = useStarStore((s) => s.showConstellationLines);
   const observationDate = useObserverStore((s) => s.observationDate);
   const latitude = useObserverStore((s) => s.latitude);
   const longitude = useObserverStore((s) => s.longitude);
@@ -65,15 +71,23 @@ export default function StarMapCanvas() {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const lineSegmentsRef = useRef<THREE.LineSegments | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const starsRef = useRef<StarPoint[]>([]);
 
   // 씬 회전 상태 (React state 대신 ref → 매 프레임 변경에도 리렌더 없음)
   const rotation = useRef({ x: -0.3, y: 0.0 });
+  const baseYRef = useRef(0);
+  const manualYawRef = useRef(0);
+  const focusAnimRef = useRef<number | null>(null);
+  const gestureAnimRef = useRef<number | null>(null);
   const lastGS = useRef({ dx: 0, dy: 0, time: 0 });
+  const lastTapRef = useRef({ x: 0, y: 0, time: 0 });
+  const pinchDistanceRef = useRef<number | null>(null);
 
   // handleTap을 ref로 관리 → PanResponder 생성 시점과 무관하게 최신 클로저 사용
   const handleTapRef = useRef<(x: number, y: number) => void>(() => {});
+  const handleDoubleTapRef = useRef<(x: number, y: number) => void>(() => {});
 
   // 최신 handleTap을 항상 ref에 유지
   handleTapRef.current = (tapX: number, tapY: number) => {
@@ -99,6 +113,34 @@ export default function StarMapCanvas() {
     }
   };
 
+  handleDoubleTapRef.current = (tapX: number, tapY: number) => {
+    const ndcX = (tapX / screenW) * 2 - 1;
+    const ndcY = -(tapY / screenH) * 2 + 1;
+
+    const fromX = rotation.current.x;
+    const fromY = rotation.current.y;
+    const targetX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, fromX + ndcY * 0.7));
+    const targetY = isNorthLocked ? baseYRef.current : fromY - ndcX * 0.9;
+    const start = Date.now();
+    const duration = 240;
+
+    if (gestureAnimRef.current != null) cancelAnimationFrame(gestureAnimRef.current);
+
+    const animate = () => {
+      const t = Math.min(1, (Date.now() - start) / duration);
+      const ease = 1 - Math.pow(1 - t, 3);
+      rotation.current.x = fromX + (targetX - fromX) * ease;
+      rotation.current.y = fromY + (targetY - fromY) * ease;
+      manualYawRef.current = rotation.current.y - baseYRef.current;
+
+      if (t < 1) {
+        gestureAnimRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    gestureAnimRef.current = requestAnimationFrame(animate);
+  };
+
   // PanResponder는 한 번만 생성 (useRef)
   const panResponder = useRef(
     PanResponder.create({
@@ -109,13 +151,34 @@ export default function StarMapCanvas() {
         lastGS.current = { dx: gs.dx, dy: gs.dy, time: Date.now() };
       },
 
-      onPanResponderMove: (_, gs) => {
+      onPanResponderMove: (e, gs) => {
+        const touches = e.nativeEvent.touches;
+        if (touches.length >= 2) {
+          const t0 = touches[0];
+          const t1 = touches[1];
+          const dist = Math.hypot(t1.pageX - t0.pageX, t1.pageY - t0.pageY);
+
+          if (pinchDistanceRef.current != null && cameraRef.current) {
+            const delta = dist - pinchDistanceRef.current;
+            const nextFov = Math.max(35, Math.min(95, cameraRef.current.fov - delta * 0.035));
+            cameraRef.current.fov = nextFov;
+            cameraRef.current.updateProjectionMatrix();
+          }
+
+          pinchDistanceRef.current = dist;
+          return;
+        }
+
+        pinchDistanceRef.current = null;
         const ddx = gs.dx - lastGS.current.dx;
         const ddy = gs.dy - lastGS.current.dy;
         lastGS.current.dx = gs.dx;
         lastGS.current.dy = gs.dy;
 
-        rotation.current.y += ddx * 0.005;
+        if (!isNorthLocked) {
+          manualYawRef.current += ddx * 0.005;
+          rotation.current.y = baseYRef.current + manualYawRef.current;
+        }
         rotation.current.x = Math.max(
           -Math.PI / 2,
           Math.min(Math.PI / 2, rotation.current.x + ddy * 0.005),
@@ -123,9 +186,26 @@ export default function StarMapCanvas() {
       },
 
       onPanResponderRelease: (e, gs) => {
+        pinchDistanceRef.current = null;
         const totalMove = Math.sqrt(gs.dx * gs.dx + gs.dy * gs.dy);
         if (totalMove < 8 && Date.now() - lastGS.current.time < 300) {
-          handleTapRef.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
+          const now = Date.now();
+          const dx = e.nativeEvent.locationX - lastTapRef.current.x;
+          const dy = e.nativeEvent.locationY - lastTapRef.current.y;
+          const nearTap = Math.hypot(dx, dy) < 24;
+          const isDoubleTap = now - lastTapRef.current.time < 280 && nearTap;
+
+          if (isDoubleTap) {
+            handleDoubleTapRef.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
+            lastTapRef.current = { x: 0, y: 0, time: 0 };
+          } else {
+            handleTapRef.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
+            lastTapRef.current = {
+              x: e.nativeEvent.locationX,
+              y: e.nativeEvent.locationY,
+              time: now,
+            };
+          }
         }
       },
     }),
@@ -151,10 +231,12 @@ export default function StarMapCanvas() {
       const starPoints: StarPoint[] = [];
 
       for (const star of BRIGHT_STARS) {
+        if (star.magnitude > magnitudeFilter) continue;
         const pos = raDec3D(star.ra, star.dec, SPHERE_RADIUS);
         positions.push(pos.x, pos.y, pos.z);
         const [r, g, b] = tempToColor(star.temperature);
-        colors.push(r, g, b);
+        const dim = highlightedConstellation && star.constellation !== highlightedConstellation ? 0.22 : 1;
+        colors.push(r * dim, g * dim, b * dim);
         starPoints.push({ ...star, x: pos.x, y: pos.y, z: pos.z });
       }
 
@@ -177,8 +259,10 @@ export default function StarMapCanvas() {
       const starMap = new Map(starPoints.map((s) => [s.id, s]));
       const linePos: number[] = [];
 
-      for (const { starPairs } of CONSTELLATION_LINES) {
-        for (const [idA, idB] of starPairs) {
+      for (const line of CONSTELLATION_LINES) {
+        if (highlightedConstellation && line.name !== highlightedConstellation) continue;
+
+        for (const [idA, idB] of line.starPairs) {
           const sa = starMap.get(idA);
           const sb = starMap.get(idB);
           if (sa && sb) {
@@ -190,11 +274,14 @@ export default function StarMapCanvas() {
       const lineGeo = new THREE.BufferGeometry();
       lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
       const lineMat = new THREE.LineBasicMaterial({
-        color: 0x1a3d6e,
+        color: highlightedConstellation ? 0x6ca6ff : 0x2a5090,
         transparent: true,
-        opacity: 0.55,
+        opacity: highlightedConstellation ? 0.95 : 0.7,
       });
-      scene.add(new THREE.LineSegments(lineGeo, lineMat));
+      const lineSegments = new THREE.LineSegments(lineGeo, lineMat);
+      lineSegments.visible = showConstellationLines;
+      lineSegmentsRef.current = lineSegments;
+      scene.add(lineSegments);
 
       // ── 애니메이션 루프 ────────────────────────────────────
       const animate = () => {
@@ -206,12 +293,14 @@ export default function StarMapCanvas() {
       };
       animate();
     },
-    [setStars],
+    [setStars, magnitudeFilter, showConstellationLines, highlightedConstellation],
   );
 
   useEffect(() => {
     return () => {
       if (animFrameRef.current != null) cancelAnimationFrame(animFrameRef.current);
+      if (focusAnimRef.current != null) cancelAnimationFrame(focusAnimRef.current);
+      if (gestureAnimRef.current != null) cancelAnimationFrame(gestureAnimRef.current);
       rendererRef.current?.dispose();
     };
   }, []);
@@ -230,8 +319,64 @@ export default function StarMapCanvas() {
       360;
     // 지방 항성시 = GMST + 경도
     const lst = ((gmst + longitude) % 360) * (Math.PI / 180);
-    rotation.current.y = -lst;
-  }, [observationDate, longitude]);
+    baseYRef.current = -lst;
+    if (isNorthLocked) {
+      manualYawRef.current = 0;
+    }
+    rotation.current.y = baseYRef.current + manualYawRef.current;
+  }, [observationDate, longitude, isNorthLocked]);
+
+  useEffect(() => {
+    if (isNorthLocked) {
+      manualYawRef.current = 0;
+      rotation.current.y = baseYRef.current;
+    }
+  }, [isNorthLocked]);
+
+  useEffect(() => {
+    if (lineSegmentsRef.current) {
+      lineSegmentsRef.current.visible = showConstellationLines;
+    }
+  }, [showConstellationLines]);
+
+  useEffect(() => {
+    if (!focusStarId || isNorthLocked) return;
+    const target = starsRef.current.find((s) => s.id === focusStarId);
+    if (!target) return;
+
+    const x = target.x;
+    const y = target.y;
+    const z = target.z;
+
+    const desiredY = Math.atan2(x, -z);
+    const d = Math.sqrt(x * x + z * z);
+    const desiredX = -Math.atan2(y, d);
+
+    const fromX = rotation.current.x;
+    const fromManualY = manualYawRef.current;
+    const toManualY = desiredY - baseYRef.current;
+    const toX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, desiredX));
+    const duration = 300;
+    const start = Date.now();
+
+    if (focusAnimRef.current != null) cancelAnimationFrame(focusAnimRef.current);
+
+    const animateFocus = () => {
+      const t = Math.min(1, (Date.now() - start) / duration);
+      const ease = 1 - Math.pow(1 - t, 3);
+      manualYawRef.current = fromManualY + (toManualY - fromManualY) * ease;
+      rotation.current.y = baseYRef.current + manualYawRef.current;
+      rotation.current.x = fromX + (toX - fromX) * ease;
+
+      if (t < 1) {
+        focusAnimRef.current = requestAnimationFrame(animateFocus);
+      } else {
+        setFocusStarId(null);
+      }
+    };
+
+    focusAnimRef.current = requestAnimationFrame(animateFocus);
+  }, [focusStarId, isNorthLocked, setFocusStarId]);
 
   return (
     <View style={styles.container}>

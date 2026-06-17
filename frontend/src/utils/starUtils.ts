@@ -25,9 +25,10 @@ export function tempToColor(temp: number): [number, number, number] {
   return [0.60, 0.70, 1.0];                    // 진청 (O형)
 }
 
-// 등급 → 포인트 크기 (밝을수록 크게)
+// 등급 → 포인트 크기 (밝을수록 크게, 논리 픽셀 기준)
 export function magnitudeToSize(magnitude: number): number {
-  return Math.max(2, 10 - magnitude * 2);
+  // 등급 -2 → ~14px, 등급 0 → ~11px, 등급 2 → ~8px, 등급 4 → ~4px
+  return Math.max(2.5, 11.0 - magnitude * 1.7);
 }
 
 // RA/Dec + 관측자 위치 + 날짜 → 고도(altitude, 도) / 방위각(azimuth, 도)

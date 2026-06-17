@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useObserverStore } from '../stores/observerStore';
+import { useUIStore } from '../stores/uiStore';
 import { BRIGHT_STARS } from '../data/brightStars';
 import { calcAltAz, calcSunriseSunset, tempToColor } from '../utils/starUtils';
+import SettingsScreen from './SettingsScreen';
 
 function pad(n: number) {
   return String(n).padStart(2, '0');
@@ -47,6 +49,8 @@ interface Props {
 
 export default function NightGuideScreen({ onBack }: Props) {
   const { latitude, longitude, observationDate, locationLabel } = useObserverStore();
+  const { isNorthLocked, toggleNorthLock } = useUIStore();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { visibleStars, sunInfo } = useMemo(() => {
     // 지평선 위 별 필터링 + 고도 내림차순 정렬
@@ -105,6 +109,9 @@ export default function NightGuideScreen({ onBack }: Props) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      {/* 설정 오버레이 */}
+      {settingsOpen && <SettingsScreen onClose={() => setSettingsOpen(false)} />}
+
       {/* 헤더 */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
@@ -114,6 +121,17 @@ export default function NightGuideScreen({ onBack }: Props) {
           <Text style={styles.title}>오늘 밤 가이드</Text>
           <Text style={styles.subtitle}>{locationLabel}</Text>
         </View>
+        <TouchableOpacity
+          onPress={toggleNorthLock}
+          style={[styles.northLockBtn, isNorthLocked && styles.northLockBtnActive]}
+        >
+          <Text style={[styles.northLockTxt, isNorthLocked && styles.northLockTxtActive]}>
+            {isNorthLocked ? 'N 고정' : 'N 자유'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.gearBtn}>
+          <Text style={styles.gearIcon}>⚙️</Text>
+        </TouchableOpacity>
       </View>
 
       {/* 일출/일몰 카드 */}
@@ -199,6 +217,33 @@ const styles = StyleSheet.create({
     color: '#3a5070',
     fontSize: 12,
     marginTop: 1,
+  },
+  northLockBtn: {
+    borderWidth: 1,
+    borderColor: '#2a4264',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#0b1627',
+    marginRight: 6,
+  },
+  northLockBtnActive: {
+    borderColor: '#5f93d7',
+    backgroundColor: '#1a3658',
+  },
+  northLockTxt: {
+    color: '#7a96ba',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  northLockTxtActive: {
+    color: '#cbe2ff',
+  },
+  gearBtn: {
+    padding: 6,
+  },
+  gearIcon: {
+    fontSize: 22,
   },
   sunCard: {
     flexDirection: 'row',
