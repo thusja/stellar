@@ -3,15 +3,11 @@ import { View, StyleSheet, PanResponder, PixelRatio, useWindowDimensions } from 
 import { GLView, ExpoWebGLRenderingContext } from 'expo-gl';
 import * as THREE from 'three';
 
-import { BRIGHT_STARS } from '../../data/brightStars';
-import { CONSTELLATION_LINES } from '../../data/constellationLines';
-import { raDec3D, tempToColor, magnitudeToSize } from '../../utils/starUtils';
+import { tempToColor } from '../../utils/starUtils';
 import { useUIStore } from '../../stores/uiStore';
 import { useStarStore } from '../../stores/starStore';
 import { useObserverStore } from '../../stores/observerStore';
 import { StarPoint } from '../../types';
-
-const SPHERE_RADIUS = 5;
 
 // expo-three 없이 Three.js WebGLRenderer를 expo-gl에 직접 연결
 function createRenderer(gl: ExpoWebGLRenderingContext): THREE.WebGLRenderer {
@@ -61,7 +57,11 @@ export default function StarMapCanvas() {
   const setFocusStarId = useUIStore((s) => s.setFocusStarId);
   const isNorthLocked = useUIStore((s) => s.isNorthLocked);
   const highlightedConstellation = useUIStore((s) => s.highlightedConstellation);
-  const setStars = useStarStore((s) => s.setStars);
+  const calculateStars = useStarStore((s) => s.calculateStars);
+  const calculationDebounceMs = useStarStore((s) => s.calculationDebounceMs);
+  const stars = useStarStore((s) => s.stars);
+  const constellationLines = useStarStore((s) => s.constellationLines);
+  const showBelowHorizonLines = useStarStore((s) => s.showBelowHorizonLines);
   const magnitudeFilter = useStarStore((s) => s.magnitudeFilter);
   const showConstellationLines = useStarStore((s) => s.showConstellationLines);
   const observationDate = useObserverStore((s) => s.observationDate);
@@ -71,8 +71,11 @@ export default function StarMapCanvas() {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const starPointsMeshRef = useRef<THREE.Points | null>(null);
   const lineSegmentsRef = useRef<THREE.LineSegments | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const calcTimerRef = useRef<number | null>(null);
+  const firstCalcRef = useRef(true);
   const starsRef = useRef<StarPoint[]>([]);
 
   // 씬 회전 상태 (React state 대신 ref → 매 프레임 변경에도 리렌더 없음)
@@ -91,9 +94,9 @@ export default function StarMapCanvas() {
 
   // 최신 handleTap을 항상 ref에 유지
   handleTapRef.current = (tapX: number, tapY: number) => {
-    const scene = sceneRef.current;
     const camera = cameraRef.current;
-    if (!scene || !camera) return;
+    const starsPoints = starPointsMeshRef.current;
+    if (!camera || !starsPoints) return;
 
     const ndcX = (tapX / screenW) * 2 - 1;
     const ndcY = -(tapY / screenH) * 2 + 1;
@@ -101,8 +104,6 @@ export default function StarMapCanvas() {
     const raycaster = new THREE.Raycaster();
     raycaster.params.Points = { threshold: 0.2 };
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
-
-    const starsPoints = scene.children[0] as THREE.Points;
     const hits = raycaster.intersectObject(starsPoints);
 
     if (hits.length > 0 && hits[0].index != null) {
@@ -225,61 +226,25 @@ export default function StarMapCanvas() {
       camera.position.set(0, 0, 0);
       cameraRef.current = camera;
 
-      // ── 별 파티클 ──────────────────────────────────────────
-      const positions: number[] = [];
-      const colors: number[] = [];
-      const starPoints: StarPoint[] = [];
-
-      for (const star of BRIGHT_STARS) {
-        if (star.magnitude > magnitudeFilter) continue;
-        const pos = raDec3D(star.ra, star.dec, SPHERE_RADIUS);
-        positions.push(pos.x, pos.y, pos.z);
-        const [r, g, b] = tempToColor(star.temperature);
-        const dim = highlightedConstellation && star.constellation !== highlightedConstellation ? 0.22 : 1;
-        colors.push(r * dim, g * dim, b * dim);
-        starPoints.push({ ...star, x: pos.x, y: pos.y, z: pos.z });
-      }
-
-      starsRef.current = starPoints;
-      setStars(starPoints);
-
+      // ── 별 파티클(초기 빈 geometry) ───────────────────────
       const starGeo = new THREE.BufferGeometry();
-      starGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      starGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
       const starMat = new THREE.PointsMaterial({
         size: 5,
         vertexColors: true,
         sizeAttenuation: false,
       });
+      const starPoints = new THREE.Points(starGeo, starMat);
+      starPointsMeshRef.current = starPoints;
+      scene.add(starPoints);
 
-      scene.add(new THREE.Points(starGeo, starMat));
-
-      // ── 별자리 선 ──────────────────────────────────────────
-      const starMap = new Map(starPoints.map((s) => [s.id, s]));
-      const linePos: number[] = [];
-
-      for (const line of CONSTELLATION_LINES) {
-        if (highlightedConstellation && line.name !== highlightedConstellation) continue;
-
-        for (const [idA, idB] of line.starPairs) {
-          const sa = starMap.get(idA);
-          const sb = starMap.get(idB);
-          if (sa && sb) {
-            linePos.push(sa.x, sa.y, sa.z, sb.x, sb.y, sb.z);
-          }
-        }
-      }
-
+      // ── 별자리 선(초기 빈 geometry) ───────────────────────
       const lineGeo = new THREE.BufferGeometry();
-      lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
       const lineMat = new THREE.LineBasicMaterial({
-        color: highlightedConstellation ? 0x6ca6ff : 0x2a5090,
+        color: 0x2a5090,
         transparent: true,
-        opacity: highlightedConstellation ? 0.95 : 0.7,
+        opacity: 0.7,
       });
       const lineSegments = new THREE.LineSegments(lineGeo, lineMat);
-      lineSegments.visible = showConstellationLines;
       lineSegmentsRef.current = lineSegments;
       scene.add(lineSegments);
 
@@ -293,41 +258,115 @@ export default function StarMapCanvas() {
       };
       animate();
     },
-    [setStars, magnitudeFilter, showConstellationLines, highlightedConstellation],
+    [],
   );
+
+  useEffect(() => {
+    if (calcTimerRef.current != null) {
+      clearTimeout(calcTimerRef.current);
+    }
+
+    const delay = firstCalcRef.current ? 0 : calculationDebounceMs;
+    firstCalcRef.current = false;
+
+    calcTimerRef.current = setTimeout(() => {
+      calculateStars(latitude, longitude, observationDate);
+      calcTimerRef.current = null;
+    }, delay) as unknown as number;
+
+    return () => {
+      if (calcTimerRef.current != null) {
+        clearTimeout(calcTimerRef.current);
+        calcTimerRef.current = null;
+      }
+    };
+  }, [calculateStars, calculationDebounceMs, latitude, longitude, observationDate, magnitudeFilter]);
+
+  useEffect(() => {
+    const starsPoints = starPointsMeshRef.current;
+    if (!starsPoints) return;
+
+    const positions: number[] = [];
+    const colors: number[] = [];
+
+    for (const star of stars) {
+      positions.push(star.x, star.y, star.z);
+      const [r, g, b] = tempToColor(star.temperature);
+      const dim = highlightedConstellation && star.constellation !== highlightedConstellation ? 0.22 : 1;
+      colors.push(r * dim, g * dim, b * dim);
+    }
+
+    starsRef.current = stars;
+
+    const nextGeo = new THREE.BufferGeometry();
+    nextGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    nextGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    const prevGeo = starsPoints.geometry;
+    starsPoints.geometry = nextGeo;
+    prevGeo.dispose();
+  }, [stars, highlightedConstellation]);
+
+  useEffect(() => {
+    const lines = lineSegmentsRef.current;
+    if (!lines) return;
+
+    const starMap = new Map(stars.map((s) => [s.id, s]));
+    const linePos: number[] = [];
+
+    for (const line of constellationLines) {
+      if (highlightedConstellation && line.name !== highlightedConstellation) continue;
+
+      for (const [idA, idB] of line.starPairs) {
+        const sa = starMap.get(idA);
+        const sb = starMap.get(idB);
+        if (sa && sb) {
+          const aboveA = (sa.altitude ?? -90) >= 0;
+          const aboveB = (sb.altitude ?? -90) >= 0;
+          if (!showBelowHorizonLines && !aboveA && !aboveB) {
+            continue;
+          }
+          linePos.push(sa.x, sa.y, sa.z, sb.x, sb.y, sb.z);
+        }
+      }
+    }
+
+    const nextGeo = new THREE.BufferGeometry();
+    nextGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
+
+    const prevGeo = lines.geometry;
+    lines.geometry = nextGeo;
+    prevGeo.dispose();
+
+    const mat = lines.material as THREE.LineBasicMaterial;
+    mat.color.setHex(highlightedConstellation ? 0x6ca6ff : 0x2a5090);
+    mat.opacity = highlightedConstellation ? 0.95 : 0.7;
+  }, [stars, constellationLines, highlightedConstellation, showBelowHorizonLines]);
 
   useEffect(() => {
     return () => {
       if (animFrameRef.current != null) cancelAnimationFrame(animFrameRef.current);
       if (focusAnimRef.current != null) cancelAnimationFrame(focusAnimRef.current);
       if (gestureAnimRef.current != null) cancelAnimationFrame(gestureAnimRef.current);
+      if (calcTimerRef.current != null) {
+        clearTimeout(calcTimerRef.current);
+        calcTimerRef.current = null;
+      }
+      if (starPointsMeshRef.current) {
+        starPointsMeshRef.current.geometry.dispose();
+        (starPointsMeshRef.current.material as THREE.PointsMaterial).dispose();
+      }
+      if (lineSegmentsRef.current) {
+        lineSegmentsRef.current.geometry.dispose();
+        (lineSegmentsRef.current.material as THREE.LineBasicMaterial).dispose();
+      }
       rendererRef.current?.dispose();
     };
   }, []);
 
-  // 날짜·위치 변경 시 항성시(LST) 기반으로 씬 Y축 회전 갱신
-  useEffect(() => {
-    // 그리니치 항성시(GMST) 근사 계산
-    const J2000 = 2451545.0;
-    const jd =
-      observationDate.getTime() / 86400000 + 2440587.5;
-    const T = (jd - J2000) / 36525;
-    const gmst =
-      (280.46061837 +
-        360.98564736629 * (jd - J2000) +
-        0.000387933 * T * T) %
-      360;
-    // 지방 항성시 = GMST + 경도
-    const lst = ((gmst + longitude) % 360) * (Math.PI / 180);
-    baseYRef.current = -lst;
-    if (isNorthLocked) {
-      manualYawRef.current = 0;
-    }
-    rotation.current.y = baseYRef.current + manualYawRef.current;
-  }, [observationDate, longitude, isNorthLocked]);
-
   useEffect(() => {
     if (isNorthLocked) {
+      baseYRef.current = 0;
       manualYawRef.current = 0;
       rotation.current.y = baseYRef.current;
     }

@@ -31,8 +31,16 @@ export default function SettingsScreen({ onClose }: Props) {
     setDefaultLocation,
   } = useObserverStore();
 
-  const { magnitudeFilter, showConstellationLines, setMagnitudeFilter, toggleConstellationLines } =
-    useStarStore();
+  const {
+    magnitudeFilter,
+    showConstellationLines,
+    showBelowHorizon,
+    showBelowHorizonLines,
+    setMagnitudeFilter,
+    toggleConstellationLines,
+    toggleShowBelowHorizon,
+    toggleShowBelowHorizonLines,
+  } = useStarStore();
 
   const [latInput, setLatInput] = useState(String(latitude.toFixed(4)));
   const [lngInput, setLngInput] = useState(String(longitude.toFixed(4)));
@@ -175,6 +183,26 @@ export default function SettingsScreen({ onClose }: Props) {
                   onValueChange={toggleConstellationLines}
                   trackColor={{ false: '#1a2a44', true: '#2a5080' }}
                   thumbColor={showConstellationLines ? '#4a80c4' : '#3a4a60'}
+                />
+              </View>
+
+              <View style={styles.rowBetween}>
+                <Text style={styles.switchLabel}>지평선 아래 별 표시</Text>
+                <Switch
+                  value={showBelowHorizon}
+                  onValueChange={toggleShowBelowHorizon}
+                  trackColor={{ false: '#1a2a44', true: '#2a5080' }}
+                  thumbColor={showBelowHorizon ? '#4a80c4' : '#3a4a60'}
+                />
+              </View>
+
+              <View style={styles.rowBetween}>
+                <Text style={styles.switchLabel}>지평선 아래 별자리 선 표시</Text>
+                <Switch
+                  value={showBelowHorizonLines}
+                  onValueChange={toggleShowBelowHorizonLines}
+                  trackColor={{ false: '#1a2a44', true: '#2a5080' }}
+                  thumbColor={showBelowHorizonLines ? '#4a80c4' : '#3a4a60'}
                 />
               </View>
             </View>

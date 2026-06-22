@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, TextInput, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import StarMapCanvas from '../components/starmap/StarMapCanvas';
 import DateTimeSlider from '../components/ui/DateTimeSlider';
@@ -76,6 +76,9 @@ export default function StarMapScreen() {
   } =
     useUIStore();
   const stars = useStarStore((s) => s.stars);
+  const isCalculating = useStarStore((s) => s.isCalculating);
+  const lastCalculationMs = useStarStore((s) => s.lastCalculationMs);
+  const calculationDebounceMs = useStarStore((s) => s.calculationDebounceMs);
   const magnitudeFilter = useStarStore((s) => s.magnitudeFilter);
   const setMagnitudeFilter = useStarStore((s) => s.setMagnitudeFilter);
   const showConstellationLines = useStarStore((s) => s.showConstellationLines);
@@ -176,7 +179,21 @@ export default function StarMapScreen() {
 
   return (
     <View style={styles.container}>
-      <StarMapCanvas key={`mag-${magnitudeFilter.toFixed(1)}`} />
+      <StarMapCanvas />
+
+      {isCalculating && (
+        <View style={styles.calcOverlay} pointerEvents="none">
+          <ActivityIndicator color="#a0c4ff" size="small" />
+          <Text style={styles.calcText}>별 좌표 계산 중...</Text>
+        </View>
+      )}
+
+      {__DEV__ && !isCalculating && lastCalculationMs > 0 && (
+        <View style={styles.calcMeta} pointerEvents="none">
+          <Text style={styles.calcMetaText}>최근 계산 {lastCalculationMs}ms</Text>
+          <Text style={styles.calcMetaText}>다음 디바운스 {calculationDebounceMs}ms</Text>
+        </View>
+      )}
 
       <SafeAreaView style={styles.headerWrapper} pointerEvents="box-none">
         <View style={styles.header}>
@@ -421,6 +438,41 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#040812',
+  },
+  calcOverlay: {
+    position: 'absolute',
+    top: 98,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(8, 14, 24, 0.92)',
+    borderWidth: 1,
+    borderColor: '#2a4264',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  calcText: {
+    color: '#a8c8f0',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  calcMeta: {
+    position: 'absolute',
+    top: 138,
+    right: 20,
+    backgroundColor: 'rgba(8, 14, 24, 0.82)',
+    borderWidth: 1,
+    borderColor: '#1f314a',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  calcMetaText: {
+    color: '#6f8fb7',
+    fontSize: 11,
+    fontWeight: '600',
   },
   headerWrapper: {
     position: 'absolute',

@@ -9,16 +9,17 @@ export interface StarPoint {
   temperature: number;
   ra: number;  // 적경 (시간 단위)
   dec: number; // 적위 (도 단위)
+  altitude?: number; // 계산된 고도 (도)
+  azimuth?: number; // 계산된 방위각 (도)
   x: number;   // 계산된 3D 좌표
   y: number;
   z: number;
 }
 
 export interface ConstellationLine {
-  id: string;
   name: string;
   nameKo: string;
-  starIds: [number, number][]; // 연결할 별 id 쌍 배열
+  starPairs: [number, number][]; // 연결할 별 id 쌍 배열
 }
 
 export interface ObserverLocation {

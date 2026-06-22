@@ -1,3 +1,5 @@
+import * as Astronomy from 'astronomy-engine';
+
 // RA(시간)/Dec(도) → 3D 구면 좌표 변환
 // 천구의 중심(원점)에서 밖을 바라보는 관찰자 기준
 export function raDec3D(
@@ -39,36 +41,12 @@ export function calcAltAz(
   lngDeg: number,
   date: Date,
 ): { altitude: number; azimuth: number } {
-  const DEG = Math.PI / 180;
-
-  // 그리니치 항성시(GMST) 계산
-  const J2000 = 2451545.0;
-  const jd = date.getTime() / 86400000 + 2440587.5;
-  const T = (jd - J2000) / 36525;
-  const gmst = (280.46061837 + 360.98564736629 * (jd - J2000) + 0.000387933 * T * T) % 360;
-
-  // 지방 항성시(LST) → 시각(Hour Angle)
-  const lst = ((gmst + lngDeg) % 360 + 360) % 360;
-  const ha = ((lst - raHours * 15) % 360 + 360) % 360; // 도 단위
-
-  const haRad = ha * DEG;
-  const decRad = decDeg * DEG;
-  const latRad = latDeg * DEG;
-
-  // 고도 계산
-  const sinAlt =
-    Math.sin(decRad) * Math.sin(latRad) +
-    Math.cos(decRad) * Math.cos(latRad) * Math.cos(haRad);
-  const altitude = Math.asin(Math.max(-1, Math.min(1, sinAlt))) / DEG;
-
-  // 방위각 계산
-  const cosAz =
-    (Math.sin(decRad) - Math.sin(latRad) * sinAlt) /
-    (Math.cos(latRad) * Math.cos(altitude * DEG));
-  let azimuth = Math.acos(Math.max(-1, Math.min(1, cosAz))) / DEG;
-  if (Math.sin(haRad) > 0) azimuth = 360 - azimuth;
-
-  return { altitude, azimuth };
+  const observer = new Astronomy.Observer(latDeg, lngDeg, 0);
+  const horizon = Astronomy.Horizon(date, observer, raHours, decDeg, 'normal');
+  return {
+    altitude: horizon.altitude,
+    azimuth: horizon.azimuth,
+  };
 }
 
 // 태양 고도 계산 (일출/일몰용 근사값)
